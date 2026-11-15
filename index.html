@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VoiceLink — Full Duplex Voice Chat</title>
-    <meta name="description" content="Aplikasi voice call full duplex real-time menggunakan WebSocket dan PHP">
+    <title>VoiceLink — Full Duplex Voice Chat & Public Group</title>
+    <meta name="description" content="Aplikasi voice call full duplex, group call WebRTC, dan chat multimedia menggunakan WebSocket dan PHP">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=2.2">
+    <link rel="stylesheet" href="style.css?v=3.0">
 </head>
 <body>
 
@@ -31,7 +31,7 @@
                 </svg>
             </div>
             <h1 class="logo-title">VoiceLink</h1>
-            <p class="logo-sub">Full Duplex Voice Chat</p>
+            <p class="logo-sub">Full Duplex Voice & Multimedia Group</p>
         </div>
 
         <div class="input-group">
@@ -40,15 +40,34 @@
         </div>
 
         <button id="join-btn" class="btn-primary" onclick="joinApp()">
-            <span>Masuk & Mulai</span>
+            <span>Masuk ke Group Publik</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M5 12h14M12 5l7 7-7 7"/>
             </svg>
         </button>
 
         <div class="ws-status" id="ws-status">
-            <span class="dot disconnected"></span>
-            <span id="ws-status-text">Menghubungkan ke server...</span>
+            <div class="ws-status-line">
+                <span class="dot connecting"></span>
+                <span id="ws-status-text">Menghubungkan ke server...</span>
+                <button id="ws-retry-btn" class="btn-retry" onclick="manualRetryWebSocket()" style="display: none;" title="Coba hubungkan kembali">Coba Lagi</button>
+            </div>
+            <button id="ws-diag-toggle-btn" class="btn-diag-toggle" type="button" onclick="toggleDiagBox()">Bantuan Koneksi HP / LAN</button>
+            <div id="ws-diag-box" class="ws-diag-box" style="display: none;">
+                <div class="diag-item"><strong>URL WebSocket:</strong> <span id="diag-ws-url">-</span></div>
+                <div class="diag-item"><strong>Konteks Halaman:</strong> <span id="diag-context">-</span></div>
+                <div class="diag-item"><strong>Akses Mikrofon:</strong> <span id="diag-mic-support">-</span></div>
+                <div class="diag-tips">
+                    <p><strong>Panduan Koneksi HP / LAN:</strong></p>
+                    <ol>
+                        <li>Pastikan laptop menjalankan <code>start_server.bat</code> (bind ke <code>0.0.0.0:8765</code>).</li>
+                        <li>Pastikan Windows Firewall mengizinkan port <code>8765</code>, <code>80</code>, dan <code>443</code> di Private Network.</li>
+                        <li><strong>Izin Mikrofon HP di HTTP:</strong> Buka <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code> di Chrome HP, masukkan URL laptop (contoh: <code>http://192.168.137.1</code>), pilih <em>Enabled</em>, lalu <em>Relaunch</em>.</li>
+                        <li><strong>Akses HTTPS / WSS:</strong> Buka via <code>https://&lt;IP-Laptop&gt;/voice-full-duplex-master/</code> dengan reverse proxy Apache aktif dan pasang sertifikat CA di HP.</li>
+                    </ol>
+                </div>
+                <button type="button" class="btn-secondary btn-sm" onclick="testMicPermission()" style="width: 100%; margin-top: 8px;">Uji Izin Mikrofon di Browser Ini</button>
+            </div>
         </div>
     </div>
 
@@ -63,6 +82,15 @@
 <div id="app-screen" class="screen">
     <!-- Sidebar -->
     <aside class="sidebar">
+        <!-- Header Sidebar Khusus Tampilan Mobile -->
+        <div class="mobile-sidebar-header" id="mobile-sidebar-header">
+            <button class="btn-back-group" onclick="switchToGroupView()" title="Kembali ke Chat Group">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                <span>Kembali ke Chat</span>
+            </button>
+            <div class="mobile-sidebar-title">Anggota Online (<span id="mobile-sidebar-count">0</span>)</div>
+        </div>
+
         <div class="sidebar-header">
             <div class="logo-small">
                 <svg viewBox="0 0 32 32" fill="none" width="32" height="32">
@@ -89,7 +117,23 @@
             </div>
         </div>
 
-        <div class="section-label">Online Sekarang</div>
+        <!-- Group Publik Navigation Card -->
+        <div class="sidebar-nav">
+            <div class="nav-item active" id="nav-group-btn" onclick="switchToGroupView()">
+                <div class="nav-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                        <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                    </svg>
+                </div>
+                <div class="nav-info">
+                    <div class="nav-title">Group Publik</div>
+                    <div class="nav-sub" id="group-online-badge">0 Online</div>
+                </div>
+                <span class="nav-active-dot"></span>
+            </div>
+        </div>
+
+        <div class="section-label">Percakapan Personal & Anggota</div>
         <div id="user-list" class="user-list">
             <div class="empty-list">Belum ada user lain online</div>
         </div>
@@ -97,32 +141,303 @@
 
     <!-- Main Content -->
     <main class="main-content">
-        <!-- Idle State -->
-        <div id="idle-panel" class="panel active">
-            <div class="idle-illustration">
-                <div class="pulse-ring ring1"></div>
-                <div class="pulse-ring ring2"></div>
-                <div class="pulse-ring ring3"></div>
-                <div class="mic-icon">
-                    <svg viewBox="0 0 64 64" fill="none">
-                        <path d="M32 12a8 8 0 0 1 8 8v12a8 8 0 0 1-16 0V20a8 8 0 0 1 8-8z" fill="url(#gmic)"/>
-                        <path d="M20 32c0 6.6 5.4 12 12 12s12-5.4 12-12" stroke="url(#gmic)" stroke-width="3" stroke-linecap="round"/>
-                        <line x1="32" y1="44" x2="32" y2="51" stroke="url(#gmic)" stroke-width="3" stroke-linecap="round"/>
-                        <line x1="26" y1="51" x2="38" y2="51" stroke="url(#gmic)" stroke-width="3" stroke-linecap="round"/>
-                        <defs>
-                            <linearGradient id="gmic" x1="20" y1="12" x2="44" y2="56" gradientUnits="userSpaceOnUse">
-                                <stop stop-color="#6C63FF"/>
-                                <stop offset="1" stop-color="#3ECFCF"/>
-                            </linearGradient>
-                        </defs>
-                    </svg>
+        <!-- ── GROUP PUBLIK VIEW (DEFAULT HUB) ── -->
+        <div id="group-view" class="group-view active">
+            <!-- Group Header -->
+            <header class="group-header">
+                <div class="group-header-info">
+                    <div class="group-avatar">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24">
+                            <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 class="group-title">Group Publik VoiceLink</h2>
+                        <div class="group-meta">
+                            <span class="online-indicator"></span>
+                            <span id="group-header-online-text" class="clickable-online-count" onclick="showMobileMembersView()" title="Lihat Anggota & Chat Pribadi">0 Anggota Online</span>
+                            <span class="meta-sep">•</span>
+                            <span id="app-conn-status" class="app-conn-status connected" title="Status koneksi WebSocket ke server"><span class="dot connected"></span><span id="app-conn-text">Online</span></span>
+                            <span class="meta-sep">•</span>
+                            <span class="limit-info-pill" title="Ukuran maksimal media yang dapat dikirim">Maks: Foto 10MB, Video 30MB, VN 10MB</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="group-header-right-actions">
+                    <!-- Tombol Navigasi Anggota Khusus Mobile (HP) -->
+                    <button class="btn-mobile-members" id="btn-mobile-members" onclick="showMobileMembersView()" title="Lihat Anggota & Chat Pribadi">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                            <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                        </svg>
+                        <span>Anggota (<span id="mobile-online-count">0</span>)</span>
+                    </button>
+
+                    <!-- Group Call Top Controls -->
+                    <div class="group-call-header-action" id="group-call-header-action">
+                    <!-- Kondisi 1: Belum ada panggilan -->
+                    <div id="gc-start-box" class="gc-action-box">
+                        <div class="gc-limit-picker" title="Pilih batas maksimal peserta panggilan group (Minimal 2, Maksimal 6 orang)">
+                            <label for="gc-limit-select">Batas:</label>
+                            <select id="gc-limit-select" class="gc-select">
+                                <option value="2">2 Orang</option>
+                                <option value="3">3 Orang</option>
+                                <option value="4">4 Orang</option>
+                                <option value="5">5 Orang</option>
+                                <option value="6" selected>6 Orang (Maks)</option>
+                            </select>
+                        </div>
+                        <button class="btn-gc-start" id="start-gc-btn" onclick="startGroupCall()" title="Mulai panggilan suara group">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/>
+                            </svg>
+                            <span>Mulai Group Call</span>
+                        </button>
+                    </div>
+
+                    <!-- Kondisi 2: Panggilan sedang berlangsung -->
+                    <div id="gc-live-box" class="gc-action-box" style="display:none;">
+                        <div class="gc-live-status">
+                            <span class="live-pulse"></span>
+                            <span id="gc-live-count-badge">Call Aktif (0/6)</span>
+                        </div>
+                        <button class="btn-gc-join" id="join-gc-btn" onclick="joinGroupCall()">
+                            <span>Gabung Panggilan</span>
+                        </button>
+                    </div>
+                </div>
+                </div>
+            </header>
+
+            <!-- ── ACTIVE GROUP CALL PANEL (WEBRTC MESH) ── -->
+            <div id="group-call-active-container" class="group-call-panel" style="display:none;">
+                <div class="group-call-bar">
+                    <div class="gc-info">
+                        <span class="live-dot"></span>
+                        <span class="gc-title-text">Panggilan Suara Group WebRTC</span>
+                        <span class="gc-timer" id="gc-timer">00:00</span>
+                        <span class="gc-capacity" id="gc-capacity-badge">Peserta: 0/6</span>
+                    </div>
+
+                    <div class="gc-controls">
+                        <button class="gc-btn" id="gc-mute-btn" onclick="toggleGroupMute()" title="Mute/Unmute Mic">
+                            <svg id="gc-mic-icon-on" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M12 2a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4zm0 14a6 6 0 0 0 6-6H6a6 6 0 0 0 6 6zm-1 2v2H9v2h6v-2h-2v-2h-2z"/>
+                            </svg>
+                            <svg id="gc-mic-icon-off" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="display:none;">
+                                <path d="M19 11a7 7 0 0 1-7 7m0 0a7 7 0 0 1-7-7m7 7v3m-3 0h6M12 1a4 4 0 0 1 4 4v4M8.21 8.21A4 4 0 0 0 8 10v2a4 4 0 0 0 6.58 3.08M3 3l18 18"/>
+                            </svg>
+                            <span id="gc-mute-label">Mute</span>
+                        </button>
+
+                        <button class="gc-btn" id="gc-deafen-btn" onclick="toggleGroupDeafen()" title="Mute/Unmute Suara Masuk">
+                            <svg id="gc-vol-icon-on" viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/>
+                            </svg>
+                            <svg id="gc-vol-icon-off" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" style="display:none;">
+                                <path d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zm-2.5.63l-3-3-1-1L5.27 3 4 4.27 7.73 8H3v8h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06A8.994 8.994 0 0 0 16.73 20l2 2L20 20.73 4.27 5"/>
+                            </svg>
+                            <span>Speaker</span>
+                        </button>
+
+                        <button class="gc-btn btn-gc-leave" id="gc-leave-btn" onclick="leaveGroupCall()" title="Tinggalkan panggilan group">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" transform="rotate(135 12 12)"/>
+                            </svg>
+                            <span>Keluar</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Grid Kartu Peserta Group Call (Maks 6) -->
+                <div class="gc-participants-grid" id="gc-participants-grid">
+                    <!-- Dinamis dibuat oleh JavaScript -->
                 </div>
             </div>
-            <h2>Siap untuk Berbicara</h2>
-            <p>Pilih seseorang dari daftar pengguna di sebelah kiri untuk memulai panggilan suara.</p>
+
+            <!-- ── CHAT GRUP & BERBAGI MEDIA ── -->
+            <div class="group-chat-container" id="group-chat-container">
+                <div class="chat-messages-area" id="chat-messages-area">
+                    <div class="system-welcome">
+                        <div class="welcome-badge">Group Publik</div>
+                        <p>Selamat datang di Group Publik VoiceLink! Anda dapat mengirim chat teks, voice note, foto, dan video, serta memulai panggilan group WebRTC (hingga 6 peserta).</p>
+                    </div>
+                    <!-- Pesan chat & notifikasi sistem dirender di sini -->
+                </div>
+
+                <!-- Progress Bar Unggahan File -->
+                <div class="upload-progress-wrap" id="upload-progress-wrap" style="display:none;">
+                    <div class="upload-progress-bar">
+                        <div class="upload-progress-fill" id="upload-progress-fill"></div>
+                    </div>
+                    <div class="upload-progress-text" id="upload-progress-text">Mengunggah file... 0%</div>
+                </div>
+
+                <!-- Bar Perekaman Voice Note -->
+                <div class="vn-recorder-bar" id="vn-recorder-bar" style="display:none;">
+                    <div class="vn-rec-status">
+                        <span class="rec-dot"></span>
+                        <span class="rec-label">Merekam Voice Note...</span>
+                        <span class="rec-timer" id="vn-timer">00:00</span>
+                    </div>
+                    <div class="vn-rec-wave" id="vn-rec-wave">
+                        <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                    <div class="vn-rec-actions">
+                        <button class="vn-btn-cancel" onclick="cancelVoiceNote()" title="Batalkan rekaman">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                            </svg>
+                            <span>Batal</span>
+                        </button>
+                        <button class="vn-btn-send" onclick="stopAndSendVoiceNote()" title="Kirim voice note">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                            </svg>
+                            <span>Kirim VN</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Input Chat Bar -->
+                <div class="chat-input-bar" id="chat-input-bar">
+                    <input type="file" id="media-file-input" style="display:none;" onchange="handleFileSelected(event)" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/ogg,video/quicktime"/>
+
+                    <button class="chat-tool-btn" id="attach-btn" onclick="triggerFileInput()" title="Kirim Foto atau Video (Maks: Gambar 10MB, Video 30MB)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                        </svg>
+                    </button>
+
+                    <button class="chat-tool-btn" id="start-vn-btn" onclick="startVoiceNoteRecording()" title="Rekam Voice Note (Maks 10MB)">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                        </svg>
+                    </button>
+
+                    <div class="chat-input-wrap">
+                        <textarea id="chat-input" placeholder="Tulis pesan ke group publik... (Enter untuk kirim)" rows="1" maxlength="2000"></textarea>
+                    </div>
+
+                    <button class="chat-send-btn" id="chat-send-btn" onclick="sendTextMessage()" title="Kirim Pesan">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
         </div>
 
-        <!-- Calling State (outgoing) -->
+        <!-- ── PERSONAL CHAT VIEW (1-ON-1 DIRECT MESSAGE & CALL) ── -->
+        <div id="personal-view" class="personal-view" style="display: none;">
+            <!-- Personal Header -->
+            <header class="personal-header">
+                <div class="personal-header-left">
+                    <button class="btn-back-group" id="personal-back-btn" onclick="switchToGroupView()" title="Kembali ke Group Publik">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                            <path d="M19 12H5M12 19l-7-7 7-7"/>
+                        </svg>
+                        <span>Group</span>
+                    </button>
+                    <button class="btn-back-group btn-to-members" id="personal-to-members-btn" onclick="showMobileMembersView()" title="Kembali ke Daftar Anggota">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                            <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+                        </svg>
+                        <span>Anggota</span>
+                    </button>
+                    <div class="personal-avatar" id="personal-peer-avatar">?</div>
+                    <div class="personal-peer-meta">
+                        <h2 class="personal-peer-name" id="personal-peer-name">—</h2>
+                        <div class="personal-peer-sub">
+                            <span class="peer-status-dot online" id="personal-peer-dot"></span>
+                            <span id="personal-peer-status">Online di Group</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="personal-header-right">
+                    <button class="btn-personal-call" id="personal-call-btn" onclick="startPersonalCall()" title="Panggil Suara Personal (WebRTC P2P)">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+                            <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/>
+                        </svg>
+                        <span>Panggil Suara</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Personal Chat Area -->
+            <div class="personal-chat-container" id="personal-chat-container">
+                <div class="chat-messages-area" id="personal-chat-messages-area">
+                    <div class="chat-system-notice" id="personal-system-notice">
+                        Percakapan pribadi ini hanya dapat dibaca oleh Anda dan lawan bicara.
+                    </div>
+                </div>
+
+                <!-- Upload Progress Bar for Personal Chat -->
+                <div class="upload-progress-wrap" id="personal-upload-progress-wrap" style="display: none;">
+                    <div class="upload-progress-bar">
+                        <div class="upload-progress-fill" id="personal-upload-progress-fill" style="width: 0%;"></div>
+                    </div>
+                    <span class="upload-progress-text" id="personal-upload-progress-text">Mengunggah 0%...</span>
+                </div>
+
+                <!-- Voice Note Recording Bar for Personal Chat -->
+                <div class="vn-recorder-bar" id="personal-vn-recorder-bar" style="display: none;">
+                    <div class="vn-rec-indicator">
+                        <span class="vn-rec-dot"></span>
+                        <span class="vn-rec-timer" id="personal-vn-timer">00:00</span>
+                    </div>
+                    <div class="vn-wave-anim">
+                        <span></span><span></span><span></span><span></span><span></span>
+                    </div>
+                    <div class="vn-rec-actions">
+                        <button class="vn-btn-cancel" onclick="cancelPersonalVoiceNote()" title="Batalkan Rekaman">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+                            </svg>
+                            <span>Batal</span>
+                        </button>
+                        <button class="vn-btn-send" onclick="stopAndSendPersonalVoiceNote()" title="Kirim Voice Note">
+                            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16">
+                                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                            </svg>
+                            <span>Kirim</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Input Bar for Personal Chat -->
+                <div class="chat-input-bar" id="personal-chat-input-bar">
+                    <input type="file" id="personal-media-file-input" style="display: none;" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/ogg,video/quicktime" onchange="handlePersonalMediaFileSelected(event)"/>
+                    <button class="chat-attach-btn" onclick="document.getElementById('personal-media-file-input').click()" title="Kirim Foto / Video">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                        </svg>
+                    </button>
+
+                    <button class="chat-vn-btn" id="personal-chat-vn-btn" onclick="startPersonalVoiceNote()" title="Rekam Voice Note">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                        </svg>
+                    </button>
+
+                    <div class="chat-input-wrap">
+                        <textarea id="personal-chat-input" placeholder="Tulis pesan personal... (Enter untuk kirim)" rows="1" maxlength="2000"></textarea>
+                    </div>
+
+                    <button class="chat-send-btn" id="personal-chat-send-btn" onclick="sendPersonalTextMessage()" title="Kirim Pesan">
+                        <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── 1-ON-1 CALL PANELS (WEBRTC PEER-TO-PEER AUDIO) ── -->
+        <!-- Calling State (outgoing 1-on-1) -->
         <div id="calling-panel" class="panel">
             <div class="call-avatar-wrap">
                 <div class="call-avatar" id="calling-avatar">?</div>
@@ -131,9 +446,9 @@
                     <div class="call-ring cr2"></div>
                 </div>
             </div>
-            <div class="call-status-label">Memanggil...</div>
+            <div class="call-status-label" id="calling-status-label">Memanggil...</div>
             <div class="call-peer-name" id="calling-name">—</div>
-            <button class="btn-end-call" id="cancel-call-btn" onclick="cancelCall()">
+            <button class="btn-end-call" id="cancel-call-btn" onclick="cancelPersonalCall()">
                 <svg viewBox="0 0 24 24" fill="currentColor">
                     <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>
                 </svg>
@@ -141,7 +456,7 @@
             </button>
         </div>
 
-        <!-- Incoming Call State -->
+        <!-- Incoming Call State (incoming 1-on-1) -->
         <div id="incoming-panel" class="panel">
             <div class="incoming-animation">
                 <div class="incoming-ring ir1"></div>
@@ -167,7 +482,7 @@
             </div>
         </div>
 
-        <!-- Active Call State -->
+        <!-- Active Call State (active 1-on-1) -->
         <div id="active-call-panel" class="panel">
             <div class="active-call-header">
                 <div class="active-avatar" id="active-avatar">?</div>
@@ -222,9 +537,22 @@
     </main>
 </div>
 
+<!-- Modal Pratinjau Media (Gambar / Video Ukuran Penuh) -->
+<div id="media-modal" class="media-modal" onclick="closeMediaModal(event)">
+    <div class="media-modal-content">
+        <button class="btn-close-modal" onclick="closeMediaModal()">&times;</button>
+        <div id="media-modal-body"></div>
+    </div>
+</div>
+
 <!-- Toast Notification -->
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=2.2"></script>
+<!-- Container elemen audio WebRTC tersembunyi untuk panggilan group & personal -->
+<div id="webrtc-audio-container" style="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0.01;pointer-events:none;" aria-hidden="true">
+    <audio id="personal-remote-audio" autoplay playsinline webkit-playsinline></audio>
+</div>
+
+<script src="app.js?v=3.0"></script>
 </body>
 </html>

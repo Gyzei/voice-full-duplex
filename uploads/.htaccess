@@ -1,0 +1,7 @@
+# Mencegah eksekusi skrip di folder uploads
+<FilesMatch "\.(php|php3|php4|php5|phtml|phps|phar|pl|py|cgi|sh|bat|cmd|exe)$">
+    Require all denied
+</FilesMatch>
+
+Options -ExecCGI -Indexes
+AddType text/plain .html .htm .shtml .php
