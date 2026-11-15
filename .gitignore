@@ -1,0 +1,21 @@
+# Secret certificates and keys
+*.crt
+*.key
+*.pem
+*.csr
+*.pfx
+*.p12
+*.cer
+*.der
+ssl/
+certs/
+
+# Environment and sensitive data
+.env
+.env.*
+*.log
+
+# Uploads except protective config
+uploads/*
+!uploads/.htaccess
+!uploads/index.html
