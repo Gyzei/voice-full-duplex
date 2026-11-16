@@ -104,6 +104,34 @@ const myNameDisplay = document.getElementById('my-name-display');
 const myIdDisplay = document.getElementById('my-id-display');
 const userListEl = document.getElementById('user-list');
 
+function applyTheme(theme) {
+    const normalizedTheme = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = normalizedTheme;
+    document.querySelectorAll('.theme-toggle').forEach(button => {
+        const nextTheme = normalizedTheme === 'dark' ? 'light' : 'dark';
+        const label = nextTheme === 'light' ? 'Mode terang' : 'Mode gelap';
+        const icon = nextTheme === 'light' ? '☀' : '☾';
+        button.setAttribute('aria-label', `Ganti ke ${label.toLowerCase()}`);
+        button.title = `Ganti ke ${label.toLowerCase()}`;
+        const labelEl = button.querySelector('.theme-toggle-label');
+        const iconEl = button.querySelector('.theme-toggle-icon');
+        if (labelEl) labelEl.textContent = label;
+        if (iconEl) iconEl.textContent = icon;
+    });
+}
+
+function toggleTheme() {
+    const nextTheme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    applyTheme(nextTheme);
+    try { localStorage.setItem('voicelink-theme', nextTheme); } catch (_) {}
+}
+
+try {
+    applyTheme(localStorage.getItem('voicelink-theme') || 'dark');
+} catch (_) {
+    applyTheme('dark');
+}
+
 // Group View Elements
 const groupView = document.getElementById('group-view');
 const groupOnlineBadge = document.getElementById('group-online-badge');
@@ -185,6 +213,9 @@ const webrtcAudioContainer = document.getElementById('webrtc-audio-container');
 let connectionTimeoutTimer = null;
 let reconnectAttempts = 0;
 const MAX_AUTO_RECONNECTS = 3;
+let communityRooms = [];
+let activeCommunityRoom = null;
+let pendingRoomInvite = new URLSearchParams(window.location.search).get('room');
 
 function getWebSocketUrl() {
     const isHttps = window.location.protocol === 'https:';
@@ -482,8 +513,10 @@ function joinApp() {
     socket.send(JSON.stringify({
         type: 'register',
         id: myId,
-        name: myName
+        name: myName,
+        inviteRoomId: pendingRoomInvite || activeCommunityRoom?.id || ''
     }));
+    pendingRoomInvite = null;
 
     // Update profil di sidebar
     myAvatar.textContent = myName.charAt(0).toUpperCase();
@@ -508,6 +541,7 @@ function showMobileMembersView() {
 
 // Beralih ke tampilan Group Publik
 function switchToGroupView() {
+    if (activeCommunityRoom) leaveCommunityRoom();
     [callingPanel, incomingPanel, activeCallPanel].forEach(p => p.classList.remove('active'));
 
     if (personalView) {
@@ -543,6 +577,64 @@ function handleSocketMessage(msg) {
 
         case 'group_init':
             handleGroupInit(msg);
+            break;
+
+        case 'community_rooms':
+            communityRooms = msg.rooms || [];
+            if (activeCommunityRoom) {
+                const activeRoom = communityRooms.find(room => room.id === activeCommunityRoom.id);
+                if (!activeRoom) activeCommunityRoom = null;
+                else activeCommunityRoom = { ...activeCommunityRoom, ...activeRoom };
+            }
+            renderCommunityRooms();
+            break;
+
+        case 'community_room_joined':
+            activeCommunityRoom = msg.room;
+            renderCommunityRooms();
+            closeCommunityMembers();
+            chatMessagesArea.innerHTML = '';
+            const roomWelcome = document.createElement('div');
+            roomWelcome.className = 'system-welcome';
+            const isCommunityAdmin = msg.room.role === 'admin' || msg.room.ownerId === myId;
+            roomWelcome.innerHTML = `<div class="welcome-badge">${escapeHtml(msg.room.name)}</div><div class="community-role-badge ${isCommunityAdmin ? 'admin' : 'member'}">${isCommunityAdmin ? 'Admin komunitas' : 'Anggota'}</div><p>Komunitas privat. Undang anggota lewat tautan atau nama pengguna.</p>`;
+            chatMessagesArea.appendChild(roomWelcome);
+            (msg.history || []).forEach(item => renderChatMessage(item, false));
+            const roomTitle = document.querySelector('.group-title');
+            if (roomTitle) roomTitle.textContent = msg.room.name;
+            if (chatInput) chatInput.placeholder = `Tulis pesan ke ${msg.room.name}...`;
+            const roomActions = document.getElementById('community-actions');
+            if (roomActions) roomActions.style.display = 'flex';
+            const membersButton = document.getElementById('community-members-btn');
+            if (membersButton) membersButton.style.display = isCommunityAdmin ? '' : 'none';
+            const publicCallActions = document.getElementById('group-call-header-action');
+            if (publicCallActions) publicCallActions.style.display = 'none';
+            const publicCallPanel = document.getElementById('group-call-active-container');
+            if (publicCallPanel) publicCallPanel.style.display = 'none';
+            ['attach-btn', 'start-vn-btn'].forEach(id => { const control = document.getElementById(id); if (control) control.style.display = 'none'; });
+            showToast(`Masuk ke komunitas ${msg.room.name}`);
+            break;
+
+        case 'community_room_message':
+            if (activeCommunityRoom && msg.roomId === activeCommunityRoom.id) handleIncomingGroupChat(msg);
+            break;
+
+        case 'community_room_members':
+            if (activeCommunityRoom?.id === msg.roomId && activeCommunityRoom.ownerId === myId) {
+                renderCommunityMembers(msg.members || []);
+            }
+            break;
+
+        case 'community_room_members_update':
+            if (activeCommunityRoom?.id === msg.roomId && activeCommunityRoom.ownerId === myId && document.getElementById('community-members-panel')?.style.display !== 'none') {
+                renderCommunityMembers(msg.members || []);
+            }
+            break;
+
+        case 'community_invite':
+            if (confirm(`${msg.fromName} mengundang Anda ke komunitas “${msg.roomName}”. Gabung sekarang?`)) {
+                socket.send(JSON.stringify({ type: 'community_room_join', roomId: msg.roomId }));
+            }
             break;
 
         case 'user_list':
@@ -674,6 +766,119 @@ function handleGroupInit(data) {
         });
         scrollChatToBottom();
     }
+}
+
+function renderCommunityRooms() {
+    const list = document.getElementById('community-room-list');
+    if (!list) return;
+    list.innerHTML = '';
+    if (!communityRooms.length) {
+        list.innerHTML = '<div class="empty-list">Belum ada komunitas</div>';
+        return;
+    }
+    communityRooms.forEach(room => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = `community-room-item ${activeCommunityRoom?.id === room.id ? 'active' : ''}`;
+        const isAdmin = room.ownerId === myId;
+        item.innerHTML = `<span class="community-room-name"># ${escapeHtml(room.name)}</span>${isAdmin ? '<span class="community-admin-tag">Admin</span>' : ''}`;
+        item.title = `${isAdmin ? 'Admin · ' : ''}Buka ${room.name}`;
+        item.addEventListener('click', () => {
+            if (socket?.readyState !== WebSocket.OPEN) return showToast('Server belum terhubung.');
+            socket.send(JSON.stringify({ type: 'community_room_join', roomId: room.id }));
+        });
+        list.appendChild(item);
+    });
+}
+
+function createCommunityRoom() {
+    if (!myName) return showToast('Masuk terlebih dahulu sebelum membuat komunitas.');
+    if (socket?.readyState !== WebSocket.OPEN) return showToast('Server belum terhubung. Coba lagi setelah status koneksi online.');
+    const name = prompt('Nama komunitas baru:');
+    if (!name || !name.trim()) return;
+    const normalizedName = name.trim();
+    if ([...normalizedName].length > 48) return showToast('Nama komunitas maksimal 48 karakter.');
+    socket.send(JSON.stringify({ type: 'community_room_create', name: normalizedName }));
+}
+
+function inviteCommunityByUsername() {
+    if (!activeCommunityRoom) return showToast('Buka komunitas yang ingin dibagikan dulu.');
+    const username = prompt('Masukkan nama pengguna yang sedang online:');
+    if (!username || !username.trim()) return;
+    socket.send(JSON.stringify({ type: 'community_room_invite_user', roomId: activeCommunityRoom.id, username: username.trim() }));
+}
+
+function requestCommunityMembers() {
+    if (!activeCommunityRoom || activeCommunityRoom.ownerId !== myId) {
+        return showToast('Hanya admin komunitas yang dapat melihat daftar anggota.');
+    }
+    if (socket?.readyState !== WebSocket.OPEN) return showToast('Server belum terhubung.');
+    socket.send(JSON.stringify({ type: 'community_room_members', roomId: activeCommunityRoom.id }));
+}
+
+function renderCommunityMembers(members) {
+    const panel = document.getElementById('community-members-panel');
+    const list = document.getElementById('community-members-list');
+    if (!panel || !list) return;
+    list.innerHTML = '';
+    if (!members.length) {
+        list.innerHTML = '<div class="community-member-empty">Belum ada anggota.</div>';
+    } else {
+        members.forEach(member => {
+            const row = document.createElement('div');
+            row.className = 'community-member-row';
+            const name = document.createElement('span');
+            name.className = 'community-member-name';
+            name.textContent = member.name;
+            const role = document.createElement('span');
+            role.className = `community-member-role ${member.role === 'admin' ? 'admin' : 'member'}`;
+            role.textContent = member.role === 'admin' ? 'Admin' : 'Anggota';
+            row.append(name, role);
+            list.appendChild(row);
+        });
+    }
+    panel.style.display = 'block';
+}
+
+function closeCommunityMembers() {
+    const panel = document.getElementById('community-members-panel');
+    if (panel) panel.style.display = 'none';
+}
+
+function shareCommunityInvite() {
+    if (!activeCommunityRoom) return showToast('Buka komunitas yang ingin dibagikan dulu.');
+    const url = new URL(window.location.href);
+    url.searchParams.set('room', activeCommunityRoom.id);
+    const inviteUrl = url.toString();
+    if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(inviteUrl).then(() => showToast('Tautan undangan disalin. Penerima harus masuk dengan nama mereka.')).catch(() => prompt('Salin tautan undangan ini:', inviteUrl));
+    } else prompt('Salin tautan undangan ini:', inviteUrl);
+}
+
+function leaveCommunityRoom() {
+    if (!activeCommunityRoom) return;
+    const roomId = activeCommunityRoom.id;
+    if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'community_room_leave', roomId }));
+    } else {
+        return showToast('Server belum terhubung.');
+    }
+    activeCommunityRoom = null;
+    const roomTitle = document.querySelector('.group-title');
+    if (roomTitle) roomTitle.textContent = 'Group Publik VoiceLink';
+    if (chatInput) chatInput.placeholder = 'Tulis pesan ke group publik... (Enter untuk kirim)';
+    const roomActions = document.getElementById('community-actions');
+    if (roomActions) roomActions.style.display = 'none';
+    const membersButton = document.getElementById('community-members-btn');
+    if (membersButton) membersButton.style.display = 'none';
+    closeCommunityMembers();
+    const publicCallActions = document.getElementById('group-call-header-action');
+    if (publicCallActions) publicCallActions.style.display = '';
+    const publicCallPanel = document.getElementById('group-call-active-container');
+    if (publicCallPanel && inGroupCall) publicCallPanel.style.display = 'block';
+    ['attach-btn', 'start-vn-btn'].forEach(id => { const control = document.getElementById(id); if (control) control.style.display = ''; });
+    chatMessagesArea.innerHTML = '<div class="system-welcome"><div class="welcome-badge">Group Publik</div><p>Kembali ke percakapan publik VoiceLink.</p></div>';
+    renderCommunityRooms();
 }
 
 // ── Update Daftar User Online ──
@@ -1259,7 +1464,8 @@ function sendTextMessage() {
     }, true);
 
     socket.send(JSON.stringify({
-        type: 'group_chat_send',
+        type: activeCommunityRoom ? 'community_room_send' : 'group_chat_send',
+        roomId: activeCommunityRoom?.id || '',
         msgType: 'text',
         text: text,
         tempId: tempId
@@ -3012,7 +3218,10 @@ function base64ToArrayBuffer(base64) {
 
 // Global exports untuk inline onclick handlers
 window.showMobileMembersView = showMobileMembersView;
+window.toggleTheme = toggleTheme;
 window.switchToGroupView = switchToGroupView;
+window.requestCommunityMembers = requestCommunityMembers;
+window.closeCommunityMembers = closeCommunityMembers;
 window.openPersonalChat = openPersonalChat;
 window.startPersonalCall = startPersonalCall;
 window.acceptCall = acceptCall;

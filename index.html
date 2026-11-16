@@ -76,10 +76,16 @@
         <div class="orb orb2"></div>
         <div class="orb orb3"></div>
     </div>
+    <button type="button" class="theme-toggle theme-toggle-login" id="theme-toggle" onclick="toggleTheme()" aria-label="Ganti ke mode terang" title="Ganti tema">
+        <span class="theme-toggle-icon" aria-hidden="true">☀</span><span class="theme-toggle-label">Mode terang</span>
+    </button>
 </div>
 
 <!-- ── MAIN APP SCREEN ── -->
 <div id="app-screen" class="screen">
+    <button type="button" class="theme-toggle theme-toggle-app" onclick="toggleTheme()" aria-label="Ganti tema" title="Ganti tema">
+        <span class="theme-toggle-icon" aria-hidden="true">☀</span><span class="theme-toggle-label">Mode terang</span>
+    </button>
     <!-- Sidebar -->
     <aside class="sidebar">
         <!-- Header Sidebar Khusus Tampilan Mobile -->
@@ -133,6 +139,14 @@
             </div>
         </div>
 
+        <div class="section-label room-section-heading">
+            <span>Komunitas</span>
+            <button type="button" class="room-create-btn" onclick="createCommunityRoom()" title="Buat komunitas">＋</button>
+        </div>
+        <div id="community-room-list" class="community-room-list">
+            <div class="empty-list">Belum ada komunitas</div>
+        </div>
+
         <div class="section-label">Percakapan Personal & Anggota</div>
         <div id="user-list" class="user-list">
             <div class="empty-list">Belum ada user lain online</div>
@@ -165,6 +179,12 @@
                 </div>
 
                 <div class="group-header-right-actions">
+                    <div id="community-actions" class="community-actions" style="display:none;">
+                        <button type="button" class="btn-community-action" id="community-members-btn" onclick="requestCommunityMembers()" style="display:none;">Lihat anggota</button>
+                        <button type="button" class="btn-community-action" onclick="shareCommunityInvite()">Salin tautan</button>
+                        <button type="button" class="btn-community-action" onclick="inviteCommunityByUsername()">Undang nama</button>
+                        <button type="button" class="btn-community-action" onclick="leaveCommunityRoom()">Keluar</button>
+                    </div>
                     <!-- Tombol Navigasi Anggota Khusus Mobile (HP) -->
                     <button class="btn-mobile-members" id="btn-mobile-members" onclick="showMobileMembersView()" title="Lihat Anggota & Chat Pribadi">
                         <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
@@ -248,6 +268,10 @@
                         </button>
                     </div>
                 </div>
+                <section id="community-members-panel" class="community-members-panel" style="display:none;" aria-live="polite">
+                    <div class="community-members-heading"><strong>Anggota komunitas</strong><button type="button" class="community-members-close" onclick="closeCommunityMembers()" aria-label="Tutup daftar anggota">×</button></div>
+                    <div id="community-members-list" class="community-members-list"></div>
+                </section>
 
                 <!-- Grid Kartu Peserta Group Call (Maks 6) -->
                 <div class="gc-participants-grid" id="gc-participants-grid">

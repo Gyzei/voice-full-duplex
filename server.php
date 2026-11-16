@@ -78,6 +78,7 @@ $groupCall = [
 
 // Riwayat pesan chat group publik (disimpan dalam memori, maksimal 50 pesan terakhir)
 $groupChatHistory = [];
+$communityRooms = []; // roomId => ['id','name','ownerId','members','history']
 
 // Riwayat pesan chat personal: convKey => array of messages (maks 50 per percakapan)
 $personalChatHistory = [];
@@ -226,6 +227,36 @@ function sendToSocket($socket, $message) {
             break;
         }
         $offset += $written;
+    }
+}
+
+function sendCommunityRoomListToMembers($roomId, $communityRooms, $users, $clients, $handshakes) {
+    if (!isset($communityRooms[$roomId])) return;
+    $members = [];
+    foreach ($communityRooms[$roomId]['members'] as $memberId => $_) {
+        $name = 'Offline';
+        foreach ($users as $memberSid => $memberUser) {
+            if ($memberUser['id'] === $memberId) {
+                $name = $memberUser['name'];
+                break;
+            }
+        }
+        $members[] = [
+            'id' => $memberId,
+            'name' => $name,
+            'role' => $memberId === $communityRooms[$roomId]['ownerId'] ? 'admin' : 'member'
+        ];
+    }
+
+    $message = ['type' => 'community_room_members_update', 'roomId' => $roomId, 'members' => $members];
+    foreach ($users as $memberSid => $memberUser) {
+        if (!isset($communityRooms[$roomId]['members'][$memberUser['id']]) || empty($handshakes[$memberSid])) continue;
+        foreach ($clients as $client) {
+            if (getSockId($client) === $memberSid) {
+                sendToSocket($client, $message);
+                break;
+            }
+        }
     }
 }
 
@@ -381,6 +412,9 @@ while (true) {
         unset($read[$masterIndex]);
         $newSocket = socket_accept($masterSocket);
         if ($newSocket !== false) {
+            // Keep accepted sockets nonblocking so a client that connects but
+            // never sends a WebSocket handshake cannot stall the whole server.
+            socket_set_nonblock($newSocket);
             $clients[] = $newSocket;
             $sid = getSockId($newSocket);
             $handshakes[$sid] = false;
@@ -396,6 +430,11 @@ while (true) {
 
         // Connection closed or lost
         if ($data === false || $data === '') {
+            if (empty($handshakes[$sid])) {
+                $pending = $buffers[$sid] ?? '';
+                $preview = $pending !== '' ? substr(str_replace(["\r", "\n"], ['\\r', '\\n'], $pending), 0, 200) : '(belum ada data handshake)';
+                echo "[!] Handshake terputus sebelum selesai (ID: $sid): $preview\n";
+            }
             handleDisconnect($sock, $clients, $users, $userSockets, $handshakes, $buffers, $rooms, $groupCall, $personalCalls);
             continue;
         }
@@ -404,6 +443,7 @@ while (true) {
         if (empty($handshakes[$sid])) {
             $buffers[$sid] .= $data;
             if (strlen($buffers[$sid]) > 8192) {
+                echo "[!] Handshake terlalu besar (ID: $sid)\n";
                 @socket_write($sock, "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
                 @socket_close($sock);
                 unset($buffers[$sid], $handshakes[$sid]);
@@ -417,6 +457,7 @@ while (true) {
             $data = substr($buffers[$sid], $headerEnd + 4);
             $buffers[$sid] = '';
             if (!performHandshake($sock, $handshakeData)) {
+                echo "[!] Handshake gagal divalidasi (ID: $sid)\n";
                 @socket_close($sock);
                 unset($buffers[$sid], $handshakes[$sid]);
                 $clients = array_values(array_filter($clients, fn($s) => $s !== $sock));
@@ -510,6 +551,126 @@ while (true) {
                     // Siarkan pesan sistem bahwa pengguna masuk ke group publik
                     broadcastGroupSystemMsg($clients, $handshakes, "$name bergabung ke group publik.");
                     broadcastUserList($clients, $users, $handshakes);
+                    $memberRooms = [];
+                    foreach ($communityRooms as $room) {
+                        if (isset($room['members'][$userId])) $memberRooms[] = ['id' => $room['id'], 'name' => $room['name'], 'ownerId' => $room['ownerId']];
+                    }
+                    sendToSocket($sock, ['type' => 'community_rooms', 'rooms' => $memberRooms]);
+                    $inviteRoomId = trim((string)($msg['inviteRoomId'] ?? ''));
+                    if ($inviteRoomId !== '' && isset($communityRooms[$inviteRoomId])) {
+                        $communityRooms[$inviteRoomId]['members'][$userId] = true;
+                        $r = $communityRooms[$inviteRoomId];
+                        sendToSocket($sock, ['type' => 'community_room_joined', 'room' => ['id' => $r['id'], 'name' => $r['name'], 'ownerId' => $r['ownerId'], 'role' => $r['ownerId'] === $userId ? 'admin' : 'member'], 'history' => $r['history']]);
+                        $memberRooms[] = ['id' => $r['id'], 'name' => $r['name'], 'ownerId' => $r['ownerId']];
+                        sendToSocket($sock, ['type' => 'community_rooms', 'rooms' => $memberRooms]);
+                    }
+                    break;
+
+                case 'community_room_create':
+                    if (!$currentUserId) {
+                        sendToSocket($sock, ['type' => 'error', 'msg' => 'Masuk terlebih dahulu sebelum membuat komunitas.']);
+                        break;
+                    }
+                    $roomName = trim((string)($msg['name'] ?? ''));
+                    if ($roomName === '' || !preg_match('//u', $roomName) || mb_strlen($roomName, 'UTF-8') > 48) {
+                        sendToSocket($sock, ['type' => 'error', 'msg' => 'Nama komunitas harus 1–48 karakter.']);
+                        break;
+                    }
+                    $roomId = bin2hex(random_bytes(12));
+                    $communityRooms[$roomId] = ['id' => $roomId, 'name' => $roomName, 'ownerId' => $currentUserId, 'members' => [$currentUserId => true], 'history' => []];
+                    sendToSocket($sock, ['type' => 'community_room_joined', 'room' => ['id' => $roomId, 'name' => $roomName, 'ownerId' => $currentUserId, 'role' => 'admin'], 'history' => []]);
+                    $memberRooms = [];
+                    foreach ($communityRooms as $r) if (isset($r['members'][$currentUserId])) $memberRooms[] = ['id' => $r['id'], 'name' => $r['name'], 'ownerId' => $r['ownerId']];
+                    sendToSocket($sock, ['type' => 'community_rooms', 'rooms' => $memberRooms]);
+                    echo "[C] Komunitas dibuat: {$roomName} ({$roomId}) oleh {$currentUserName}\n";
+                    break;
+
+                case 'community_room_join':
+                    $roomId = trim((string)($msg['roomId'] ?? ''));
+                    if (!isset($communityRooms[$roomId])) {
+                        sendToSocket($sock, ['type' => 'error', 'msg' => 'Tautan komunitas tidak valid atau server sudah dimulai ulang.']);
+                        break;
+                    }
+                    $communityRooms[$roomId]['members'][$currentUserId] = true;
+                    $r = $communityRooms[$roomId];
+                    sendToSocket($sock, ['type' => 'community_room_joined', 'room' => ['id' => $r['id'], 'name' => $r['name'], 'ownerId' => $r['ownerId'], 'role' => $r['ownerId'] === $currentUserId ? 'admin' : 'member'], 'history' => $r['history']]);
+                    $memberRooms = [];
+                    foreach ($communityRooms as $memberRoom) if (isset($memberRoom['members'][$currentUserId])) $memberRooms[] = ['id' => $memberRoom['id'], 'name' => $memberRoom['name'], 'ownerId' => $memberRoom['ownerId']];
+                    sendToSocket($sock, ['type' => 'community_rooms', 'rooms' => $memberRooms]);
+                    sendCommunityRoomListToMembers($roomId, $communityRooms, $users, $clients, $handshakes);
+                    break;
+
+                case 'community_room_leave':
+                    $roomId = trim((string)($msg['roomId'] ?? ''));
+                    if (isset($communityRooms[$roomId]['members'][$currentUserId])) {
+                        $isAdmin = $communityRooms[$roomId]['ownerId'] === $currentUserId;
+                        $otherMembers = count($communityRooms[$roomId]['members']) - 1;
+                        if ($isAdmin && $otherMembers > 0) {
+                            sendToSocket($sock, ['type' => 'error', 'msg' => 'Admin tidak bisa keluar selama komunitas masih memiliki anggota lain.']);
+                            break;
+                        }
+                        unset($communityRooms[$roomId]['members'][$currentUserId]);
+                        sendCommunityRoomListToMembers($roomId, $communityRooms, $users, $clients, $handshakes);
+                    }
+                    break;
+
+                case 'community_room_members':
+                    $roomId = trim((string)($msg['roomId'] ?? ''));
+                    if (!isset($communityRooms[$roomId]) || $communityRooms[$roomId]['ownerId'] !== $currentUserId) {
+                        sendToSocket($sock, ['type' => 'error', 'msg' => 'Hanya admin komunitas yang dapat melihat daftar anggota.']);
+                        break;
+                    }
+                    $roomMembers = [];
+                    foreach ($communityRooms[$roomId]['members'] as $memberId => $_) {
+                        $memberName = 'Offline';
+                        foreach ($users as $memberSid => $memberUser) {
+                            if ($memberUser['id'] === $memberId) {
+                                $memberName = $memberUser['name'];
+                                break;
+                            }
+                        }
+                        $roomMembers[] = [
+                            'id' => $memberId,
+                            'name' => $memberName,
+                            'role' => $memberId === $communityRooms[$roomId]['ownerId'] ? 'admin' : 'member'
+                        ];
+                    }
+                    sendToSocket($sock, ['type' => 'community_room_members', 'roomId' => $roomId, 'members' => $roomMembers]);
+                    break;
+
+                case 'community_room_invite_user':
+                    $roomId = trim((string)($msg['roomId'] ?? ''));
+                    $targetName = trim((string)($msg['username'] ?? ''));
+                    if (!isset($communityRooms[$roomId]) || !isset($communityRooms[$roomId]['members'][$currentUserId])) break;
+                    $found = false;
+                    foreach ($users as $targetSid => $targetUser) {
+                        if (mb_strtolower($targetUser['name'], 'UTF-8') === mb_strtolower($targetName, 'UTF-8')) {
+                            foreach ($clients as $targetSock) {
+                                if (getSockId($targetSock) === $targetSid && !empty($handshakes[$targetSid])) {
+                                    sendToSocket($targetSock, ['type' => 'community_invite', 'roomId' => $roomId, 'roomName' => $communityRooms[$roomId]['name'], 'fromName' => $currentUserName]);
+                                    break;
+                                }
+                            }
+                            $found = true;
+                            break;
+                        }
+                    }
+                    sendToSocket($sock, ['type' => 'error', 'msg' => $found ? 'Undangan dikirim.' : 'Nama pengguna tidak ditemukan atau sedang offline.']);
+                    break;
+
+                case 'community_room_send':
+                    $roomId = trim((string)($msg['roomId'] ?? ''));
+                    $roomText = trim((string)($msg['text'] ?? ''));
+                    if (!isset($communityRooms[$roomId]['members'][$currentUserId])) break;
+                    if ($roomText === '' || mb_strlen($roomText, 'UTF-8') > 2000) break;
+                    $roomMessage = ['type' => 'community_room_message', 'roomId' => $roomId, 'id' => 'msg_' . bin2hex(random_bytes(8)), 'tempId' => $msg['tempId'] ?? null, 'senderId' => $currentUserId, 'senderName' => $currentUserName, 'msgType' => 'text', 'text' => htmlspecialchars($roomText, ENT_QUOTES, 'UTF-8'), 'time' => date('H:i')];
+                    $communityRooms[$roomId]['history'][] = $roomMessage;
+                    if (count($communityRooms[$roomId]['history']) > 50) array_shift($communityRooms[$roomId]['history']);
+                    foreach ($users as $targetSid => $targetUser) {
+                        if (isset($communityRooms[$roomId]['members'][$targetUser['id']]) && !empty($handshakes[$targetSid])) {
+                            foreach ($clients as $targetSock) if (getSockId($targetSock) === $targetSid) { sendToSocket($targetSock, $roomMessage); break; }
+                        }
+                    }
                     break;
 
                 // ── 2. GROUP CALL (MAKSIMAL 6 PESERTA, WEBRTC SIGNALING) ──

@@ -131,7 +131,7 @@ echo   Listening : ws://0.0.0.0:8765 (Semua interface LAN & Localhost)
 echo ==========================================================
 echo.
 echo URL Akses Aplikasi:
-echo   * Laptop (Localhost) : http://localhost/voice-full-duplex-master/
+echo   * Laptop Localhost   : http://localhost/voice-full-duplex-master/
 echo   * HP / Perangkat LAN :
 for /f "tokens=2 delims=:" %%A in ('ipconfig ^| findstr /c:"IPv4"') do (
     for /f "tokens=1 delims= " %%B in ("%%A") do (

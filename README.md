@@ -44,6 +44,11 @@ Aplikasi komunikasi suara full-duplex berbasis browser, Web Audio API, WebRTC me
    - Kontrol panggilan: Terima, Tolak, Tutup, Mute/Unmute mikrofon, Matikan/Aktifkan Speaker (Deafen), serta animasi visualizer waveform real-time.
    - Proteksi keamanan: pencegahan memanggil diri sendiri, deteksi sibuk (jika salah satu pihak sedang dalam group call atau call lain), dan pembersihan sesi otomatis jika koneksi terputus.
 
+6. **Komunitas Privat**:
+   - Buat beberapa komunitas dari sidebar dan kirim pesan teks khusus anggota komunitas.
+   - Undang pengguna online berdasarkan nama yang mereka pakai saat masuk, atau salin tautan undangan untuk bergabung setelah login.
+   - Daftar komunitas dan riwayat pesan disimpan di memori server, sehingga akan hilang saat WebSocket server dimulai ulang. Fitur komunitas saat ini mendukung chat teks.
+
 ---
 
 ## Persyaratan Sistem
